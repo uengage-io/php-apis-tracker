@@ -1,0 +1,41 @@
+{
+    "name": "uengage/curl-tracker",
+    "description": "Automatically track cURL API response times and publish metrics to AWS CloudWatch with zero code changes",
+    "type": "library",
+    "license": "MIT",
+    "keywords": ["curl", "api", "metrics", "cloudwatch", "aws", "monitoring", "performance"],
+    "authors": [
+        {
+            "name": "Your Name",
+            "email": "your.email@example.com"
+        }
+    ],
+    "require": {
+        "php": ">=7.1",
+        "aws/aws-sdk-php": "^3.0",
+        "ext-curl": "*"
+    },
+    "suggest": {
+        "ext-uopz": "For zero-code-change automatic cURL hooking (recommended)",
+        "ext-runkit7": "Alternative for automatic cURL hooking"
+    },
+    "autoload": {
+        "psr-4": {
+            "CurlTracker\\": "src/"
+        },
+        "files": [
+            "src/helpers.php"
+        ]
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "CurlTracker\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "phpunit",
+        "check-compatibility": "@php bin/check-compatibility.php"
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
