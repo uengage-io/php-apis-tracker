@@ -97,28 +97,30 @@ class CurlHook
         }
 
         try {
-            uopz_set_return('curl_init', function($url = null) {
+            $self = $this;
+            
+            uopz_set_return('curl_init', function($url = null) use ($self) {
                 $handle = \curl_init($url);
                 if ($handle) {
-                    $this->trackCurlInit($handle, $url);
+                    $self->trackCurlInit($handle, $url);
                 }
                 return $handle;
             }, true);
 
-            uopz_set_return('curl_setopt', function($handle, $option, $value) {
-                $this->trackCurlSetopt($handle, $option, $value);
+            uopz_set_return('curl_setopt', function($handle, $option, $value) use ($self) {
+                $self->trackCurlSetopt($handle, $option, $value);
                 return \curl_setopt($handle, $option, $value);
             }, true);
 
-            uopz_set_return('curl_exec', function($handle) {
-                $this->trackCurlExecStart($handle);
+            uopz_set_return('curl_exec', function($handle) use ($self) {
+                $self->trackCurlExecStart($handle);
                 $result = \curl_exec($handle);
-                $this->trackCurlExecEnd($handle);
+                $self->trackCurlExecEnd($handle);
                 return $result;
             }, true);
 
-            uopz_set_return('curl_close', function($handle) {
-                $this->trackCurlClose($handle);
+            uopz_set_return('curl_close', function($handle) use ($self) {
+                $self->trackCurlClose($handle);
                 \curl_close($handle);
             }, true);
 
