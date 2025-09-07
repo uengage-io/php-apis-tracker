@@ -20,7 +20,6 @@ class CurlHook
     private function __construct(array $config = [])
     {
         $this->config = array_merge([
-            'aws_region' => 'us-east-1',
             'namespace' => 'CurlMetrics',
             'default_dimensions' => [],
             'enabled' => true,
@@ -30,7 +29,6 @@ class CurlHook
 
         $awsConfig = array_merge([
             'version' => 'latest',
-            'region' => $this->config['aws_region'],
         ], $this->config['aws']);
 
         $this->cloudWatchClient = new CloudWatchClient($awsConfig);

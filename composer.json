@@ -3,7 +3,7 @@
     "description": "Automatically track cURL API response times and publish metrics to AWS CloudWatch with zero code changes",
     "type": "library",
     "license": "MIT",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "keywords": ["curl", "api", "metrics", "cloudwatch", "aws", "monitoring", "performance"],
     "authors": [
         {
