@@ -1,10 +1,10 @@
 {
     "name": "uengage/curl-tracker",
-    "description": "Automatically track cURL API response times and publish metrics to AWS CloudWatch with zero code changes",
+    "description": "Automatically track cURL API response times and publish metrics to AWS CloudWatch or Prometheus PushGateway with zero code changes",
     "type": "library",
     "license": "MIT",
-    "version": "1.0.3",
-    "keywords": ["curl", "api", "metrics", "cloudwatch", "aws", "monitoring", "performance"],
+    "version": "2.0.0",
+    "keywords": ["curl", "api", "metrics", "cloudwatch", "aws", "prometheus", "pushgateway", "monitoring", "performance"],
     "authors": [
         {
             "name": "Your Name",
@@ -13,12 +13,15 @@
     ],
     "require": {
         "php": ">=7.1",
-        "aws/aws-sdk-php": "^3.0",
         "ext-curl": "*"
+    },
+    "require-dev": {
+        "aws/aws-sdk-php": "^3.0"
     },
     "suggest": {
         "ext-uopz": "For zero-code-change automatic cURL hooking (recommended)",
-        "ext-runkit7": "Alternative for automatic cURL hooking"
+        "ext-runkit7": "Alternative for automatic cURL hooking",
+        "aws/aws-sdk-php": "Required when using CloudWatch backend (^3.0)"
     },
     "autoload": {
         "psr-4": {

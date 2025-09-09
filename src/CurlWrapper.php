@@ -2,8 +2,9 @@
 
 namespace CurlTracker;
 
-use Aws\CloudWatch\CloudWatchClient;
-use Aws\Exception\AwsException;
+use CurlTracker\Backends\MetricsBackendInterface;
+use CurlTracker\Backends\CloudWatchBackend;
+use CurlTracker\Backends\PushGatewayBackend;
 
 /**
  * Manual wrapper for cURL functions with metrics tracking
@@ -11,38 +12,94 @@ use Aws\Exception\AwsException;
  */
 class CurlWrapper
 {
-    private static $cloudWatchClient = null;
+    private static $backend = null;
     private static $config = [];
     private static $activeCurls = [];
 
     public static function init(array $config = []): void
     {
         self::$config = array_merge([
-            'aws_region' => 'us-east-1',
-            'namespace' => 'CurlMetrics',
-            'default_dimensions' => [],
+            'backend' => 'cloudwatch', // 'cloudwatch' or 'pushgateway'
             'enabled' => true,
             'debug' => false,
-            'aws' => []
+            'default_dimensions' => [],
+            // CloudWatch specific config
+            'cloudwatch' => [
+                'aws_region' => 'us-east-1',
+                'namespace' => 'CurlMetrics',
+                'aws' => []
+            ],
+            // PushGateway specific config
+            'pushgateway' => [
+                'url' => 'http://localhost:9091',
+                'job_name' => 'curl_tracker',
+                'instance' => gethostname() ?: 'unknown',
+                'timeout' => 5,
+                'auth' => null,
+                'verify_ssl' => true,
+                'default_labels' => []
+            ]
         ], $config);
 
         if (!self::$config['enabled']) {
             return;
         }
 
-        $awsConfig = array_merge([
-            'version' => 'latest',
-            'region' => self::$config['aws_region'],
-        ], self::$config['aws']);
+        self::initializeBackend();
+    }
 
-        self::$cloudWatchClient = new CloudWatchClient($awsConfig);
+    /**
+     * Initialize the selected metrics backend
+     */
+    private static function initializeBackend(): void
+    {
+        $backendType = strtolower(self::$config['backend']);
+        
+        try {
+            switch ($backendType) {
+                case 'cloudwatch':
+                    self::$backend = new CloudWatchBackend();
+                    $backendConfig = array_merge(
+                        self::$config['cloudwatch'], 
+                        ['debug' => self::$config['debug']]
+                    );
+                    break;
+                    
+                case 'pushgateway':
+                    self::$backend = new PushGatewayBackend();
+                    $backendConfig = array_merge(
+                        self::$config['pushgateway'], 
+                        ['debug' => self::$config['debug']]
+                    );
+                    break;
+                    
+                default:
+                    throw new \InvalidArgumentException("Unsupported backend: {$backendType}");
+            }
+
+            self::$backend->initialize($backendConfig);
+
+            if (!self::$backend->isReady()) {
+                $status = self::$backend->getStatus();
+                $error = $status['last_error'] ?? 'Unknown initialization error';
+                throw new \RuntimeException("Backend initialization failed: {$error}");
+            }
+
+            if (self::$config['debug']) {
+                error_log("[CurlTracker] Initialized {$backendType} backend successfully");
+            }
+
+        } catch (\Exception $e) {
+            self::$backend = null;
+            error_log("[CurlTracker] Failed to initialize backend: " . $e->getMessage());
+        }
     }
 
     public static function curl_init($url = null)
     {
         $handle = curl_init($url);
         
-        if ($handle && self::$cloudWatchClient) {
+        if ($handle && self::$backend) {
             $handleId = (int)$handle;
             self::$activeCurls[$handleId] = [
                 'url' => $url,
@@ -57,7 +114,7 @@ class CurlWrapper
     {
         $result = curl_setopt($handle, $option, $value);
         
-        if (self::$cloudWatchClient) {
+        if (self::$backend) {
             $handleId = (int)$handle;
             if (isset(self::$activeCurls[$handleId]) && $option === CURLOPT_URL) {
                 self::$activeCurls[$handleId]['url'] = $value;
@@ -71,7 +128,7 @@ class CurlWrapper
     {
         $result = curl_setopt_array($handle, $options);
         
-        if (self::$cloudWatchClient && isset($options[CURLOPT_URL])) {
+        if (self::$backend && isset($options[CURLOPT_URL])) {
             $handleId = (int)$handle;
             if (isset(self::$activeCurls[$handleId])) {
                 self::$activeCurls[$handleId]['url'] = $options[CURLOPT_URL];
@@ -83,7 +140,8 @@ class CurlWrapper
 
     public static function curl_exec($handle)
     {
-        if (self::$cloudWatchClient) {
+        $handleId = null;
+        if (self::$backend) {
             $handleId = (int)$handle;
             if (isset(self::$activeCurls[$handleId])) {
                 self::$activeCurls[$handleId]['start_time'] = microtime(true);
@@ -92,7 +150,7 @@ class CurlWrapper
 
         $result = curl_exec($handle);
 
-        if (self::$cloudWatchClient) {
+        if (self::$backend && $handleId !== null) {
             self::trackMetrics($handle, $handleId);
         }
 
@@ -101,7 +159,7 @@ class CurlWrapper
 
     public static function curl_close($handle): void
     {
-        if (self::$cloudWatchClient) {
+        if (self::$backend) {
             $handleId = (int)$handle;
             unset(self::$activeCurls[$handleId]);
         }
@@ -138,11 +196,11 @@ class CurlWrapper
         $url = $curlInfo['url'] ?? curl_getinfo($handle, CURLINFO_EFFECTIVE_URL);
 
         if ($url) {
-            self::recordMetrics(
-                self::extractApiName($url),
-                $responseTime,
-                $httpCode >= 200 && $httpCode < 400
-            );
+            $apiName = self::extractApiName($url);
+            $success = $httpCode >= 200 && $httpCode < 400;
+            $additionalDimensions = self::buildAdditionalDimensions();
+
+            self::$backend->publishMetrics($apiName, $responseTime, $success, $additionalDimensions);
         }
     }
 
@@ -152,59 +210,55 @@ class CurlWrapper
         return $parsedUrl['host'] ?? 'unknown';
     }
 
-    private static function recordMetrics(string $apiName, float $responseTime, bool $success): void
+    private static function buildAdditionalDimensions(): array
     {
-        $dimensions = array_merge(self::$config['default_dimensions'], [
-            ['Name' => 'ApiName', 'Value' => $apiName]
-        ]);
-
-        $timestamp = new \DateTime();
-
-        $metricsData = [
-            [
-                'MetricName' => 'ResponseTime',
-                'Value' => $responseTime,
-                'Unit' => 'Milliseconds',
-                'Dimensions' => $dimensions,
-                'Timestamp' => $timestamp
-            ],
-            [
-                'MetricName' => 'RequestCount',
-                'Value' => 1,
-                'Unit' => 'Count',
-                'Dimensions' => $dimensions,
-                'Timestamp' => $timestamp
-            ],
-            [
-                'MetricName' => $success ? 'SuccessCount' : 'ErrorCount',
-                'Value' => 1,
-                'Unit' => 'Count',
-                'Dimensions' => $dimensions,
-                'Timestamp' => $timestamp
-            ]
-        ];
-
-        self::publishMetrics($metricsData);
-    }
-
-    private static function publishMetrics(array $metricsData): void
-    {
-        try {
-            self::$cloudWatchClient->putMetricData([
-                'Namespace' => self::$config['namespace'],
-                'MetricData' => $metricsData
-            ]);
-
-            if (self::$config['debug']) {
-                error_log('[CurlTracker] Published ' . count($metricsData) . ' metrics to CloudWatch');
+        $dimensions = [];
+        
+        // Convert default_dimensions format based on backend
+        if (!empty(self::$config['default_dimensions'])) {
+            foreach (self::$config['default_dimensions'] as $dimension) {
+                if (is_array($dimension) && isset($dimension['Name'], $dimension['Value'])) {
+                    // CloudWatch format
+                    $dimensions[$dimension['Name']] = $dimension['Value'];
+                } elseif (is_string($dimension)) {
+                    // Simple string format
+                    $dimensions['tag'] = $dimension;
+                }
             }
-        } catch (AwsException $e) {
-            error_log("Failed to publish metrics to CloudWatch: " . $e->getMessage());
         }
+
+        return $dimensions;
     }
 
     public static function isEnabled(): bool
     {
-        return self::$cloudWatchClient !== null;
+        return self::$backend !== null && self::$backend->isReady();
+    }
+
+    /**
+     * Get the current backend status
+     */
+    public static function getBackendStatus(): array
+    {
+        if (!self::$backend) {
+            return [
+                'backend' => null,
+                'ready' => false,
+                'error' => 'No backend initialized'
+            ];
+        }
+
+        $status = self::$backend->getStatus();
+        $status['backend'] = self::$backend->getName();
+        
+        return $status;
+    }
+
+    /**
+     * Get configuration for debugging
+     */
+    public static function getConfig(): array
+    {
+        return self::$config;
     }
 }
