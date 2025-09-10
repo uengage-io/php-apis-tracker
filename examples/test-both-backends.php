@@ -48,6 +48,7 @@ $pushgatewayConfig = [
     'backend' => 'pushgateway',
     'enabled' => true,
     'debug' => true,
+    'track_endpoints' => true,
     'default_dimensions' => [
         'environment' => 'test',
         'script' => 'test-both-backends'

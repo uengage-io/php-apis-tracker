@@ -22,7 +22,9 @@ class CurlWrapper
             'backend' => 'cloudwatch', // 'cloudwatch' or 'pushgateway'
             'enabled' => true,
             'debug' => false,
+            'service' => null, // Service name for the service dimension
             'default_dimensions' => [],
+            'track_endpoints' => false, // false, true, or array of host patterns
             // CloudWatch specific config
             'cloudwatch' => [
                 'aws_region' => 'us-east-1',
@@ -207,12 +209,69 @@ class CurlWrapper
     private static function extractApiName(string $url): string
     {
         $parsedUrl = parse_url($url);
-        return $parsedUrl['host'] ?? 'unknown';
+        $host = $parsedUrl['host'] ?? 'unknown';
+        
+        // If endpoint tracking is disabled, return only the host
+        if (empty(self::$config['track_endpoints'])) {
+            return $host;
+        }
+        
+        // If track_endpoints is true, track all endpoints
+        if (self::$config['track_endpoints'] === true) {
+            return self::buildEndpointName($parsedUrl);
+        }
+        
+        // If track_endpoints is an array, check if this host matches any pattern
+        if (is_array(self::$config['track_endpoints'])) {
+            foreach (self::$config['track_endpoints'] as $pattern) {
+                if (self::matchesPattern($host, $pattern)) {
+                    return self::buildEndpointName($parsedUrl);
+                }
+            }
+        }
+        
+        // Default to host-only tracking
+        return $host;
+    }
+    
+    private static function buildEndpointName(array $parsedUrl): string
+    {
+        $host = $parsedUrl['host'] ?? 'unknown';
+        $path = $parsedUrl['path'] ?? '/';
+        
+        // Normalize path to remove trailing slashes and clean up multiple slashes
+        $path = preg_replace('/\/+/', '/', trim($path, '/'));
+        if (empty($path)) {
+            $path = '/';
+        } else {
+            $path = '/' . $path;
+        }
+        
+        return $host . $path;
+    }
+    
+    private static function matchesPattern(string $host, string $pattern): bool
+    {
+        // Support wildcard matching with asterisks
+        if (strpos($pattern, '*') !== false) {
+            // First escape dots, then replace asterisks with regex wildcards
+            $regexPattern = str_replace('.', '\.', $pattern);
+            $regexPattern = str_replace('*', '.*', $regexPattern);
+            return preg_match('/^' . $regexPattern . '$/', $host) === 1;
+        }
+        
+        // Exact match
+        return $host === $pattern;
     }
 
     private static function buildAdditionalDimensions(): array
     {
         $dimensions = [];
+        
+        // Add service dimension if configured
+        if (!empty(self::$config['service'])) {
+            $dimensions['service'] = self::$config['service'];
+        }
         
         // Convert default_dimensions format based on backend
         if (!empty(self::$config['default_dimensions'])) {

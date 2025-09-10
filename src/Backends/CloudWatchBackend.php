@@ -61,11 +61,28 @@ class CloudWatchBackend implements MetricsBackendInterface
             return false;
         }
 
+        // Parse host and endpoint from apiName
+        $host = $apiName;
+        $endpoint = '*';
+        if (strpos($apiName, '/') !== false) {
+            $parts = explode('/', $apiName, 2);
+            $host = $parts[0];
+            $endpoint = '/' . $parts[1];
+        }
+
+        // Build base dimensions with the new naming convention
         $dimensions = array_merge($this->config['default_dimensions'], [
-            ['Name' => 'ApiName', 'Value' => $apiName]
+            ['Name' => 'host', 'Value' => $host],
+            ['Name' => 'endpoint', 'Value' => $endpoint]
         ]);
 
-        // Add additional dimensions
+        // Add service dimension if provided
+        if (isset($additionalDimensions['service'])) {
+            $dimensions[] = ['Name' => 'service', 'Value' => $additionalDimensions['service']];
+            unset($additionalDimensions['service']);
+        }
+
+        // Add any other additional dimensions
         foreach ($additionalDimensions as $name => $value) {
             $dimensions[] = ['Name' => $name, 'Value' => $value];
         }
@@ -74,27 +91,32 @@ class CloudWatchBackend implements MetricsBackendInterface
 
         $metricsData = [
             [
-                'MetricName' => 'ResponseTime',
+                'MetricName' => 'api_response_time',
                 'Value' => $responseTime,
                 'Unit' => 'Milliseconds',
                 'Dimensions' => $dimensions,
                 'Timestamp' => $timestamp
-            ],
-            [
-                'MetricName' => 'RequestCount',
-                'Value' => 1,
-                'Unit' => 'Count',
-                'Dimensions' => $dimensions,
-                'Timestamp' => $timestamp
-            ],
-            [
-                'MetricName' => $success ? 'SuccessCount' : 'ErrorCount',
-                'Value' => 1,
-                'Unit' => 'Count',
-                'Dimensions' => $dimensions,
-                'Timestamp' => $timestamp
             ]
         ];
+
+        // Add success/error metrics
+        if ($success) {
+            $metricsData[] = [
+                'MetricName' => 'api_success',
+                'Value' => 1,
+                'Unit' => 'Count',
+                'Dimensions' => $dimensions,
+                'Timestamp' => $timestamp
+            ];
+        } else {
+            $metricsData[] = [
+                'MetricName' => 'api_error',
+                'Value' => 1,
+                'Unit' => 'Count',
+                'Dimensions' => $dimensions,
+                'Timestamp' => $timestamp
+            ];
+        }
 
         try {
             $this->client->putMetricData([

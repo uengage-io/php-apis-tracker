@@ -57,27 +57,45 @@ class PushGatewayBackend implements MetricsBackendInterface
             return false;
         }
 
-        // Build labels
+        // Parse host and endpoint from apiName
+        $host = $apiName;
+        $endpoint = '*';
+        if (strpos($apiName, '/') !== false) {
+            $parts = explode('/', $apiName, 2);
+            $host = $parts[0];
+            $endpoint = '/' . $parts[1];
+        }
+
+        // Build labels with the new naming convention
         $labels = array_merge($this->config['default_labels'], [
-            'api_name' => $this->sanitizeLabelValue($apiName)
+            'host' => $this->sanitizeLabelValue($host),
+            'endpoint' => $this->sanitizeLabelValue($endpoint)
         ]);
 
-        // Add additional dimensions as labels
+        // Add service label if provided
+        if (isset($additionalDimensions['service'])) {
+            $labels['service'] = $this->sanitizeLabelValue($additionalDimensions['service']);
+            unset($additionalDimensions['service']);
+        }
+
+        // Add any other additional dimensions as labels
         foreach ($additionalDimensions as $name => $value) {
             $labels[$this->sanitizeLabelName($name)] = $this->sanitizeLabelValue($value);
         }
 
         $labelString = $this->buildLabelString($labels);
 
-        // Prepare metrics in Prometheus format
-        $timestamp = time() * 1000; // milliseconds
+        // Prepare metrics in Prometheus format with new metric names
         $metrics = [
-            "curl_response_time_milliseconds{$labelString} {$responseTime}",
-            "curl_requests_total{$labelString} 1",
-            $success 
-                ? "curl_requests_success_total{$labelString} 1"
-                : "curl_requests_error_total{$labelString} 1"
+            "api_response_time{$labelString} {$responseTime}"
         ];
+
+        // Add success/error metrics
+        if ($success) {
+            $metrics[] = "api_success{$labelString} 1";
+        } else {
+            $metrics[] = "api_error{$labelString} 1";
+        }
 
         $metricsData = implode("\n", $metrics) . "\n";
 
@@ -106,6 +124,9 @@ class PushGatewayBackend implements MetricsBackendInterface
                 'Content-Type: text/plain; version=0.0.4; charset=utf-8'
             ]
         ]);
+
+        var_dump($metricsData);
+        die();
 
         // Add authentication if configured
         if (!empty($this->config['auth'])) {
