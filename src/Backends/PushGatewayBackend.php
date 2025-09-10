@@ -125,9 +125,6 @@ class PushGatewayBackend implements MetricsBackendInterface
             ]
         ]);
 
-        var_dump($metricsData);
-        die();
-
         // Add authentication if configured
         if (!empty($this->config['auth'])) {
             if (isset($this->config['auth']['username'], $this->config['auth']['password'])) {
