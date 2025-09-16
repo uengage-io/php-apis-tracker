@@ -2,7 +2,6 @@
 
 namespace CurlTracker;
 
-use CurlTracker\Backends\MetricsBackendInterface;
 use CurlTracker\Backends\CloudWatchBackend;
 use CurlTracker\Backends\PushGatewayBackend;
 

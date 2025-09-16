@@ -2,9 +2,6 @@
 
 namespace CurlTracker;
 
-use Aws\CloudWatch\CloudWatchClient;
-use Aws\Exception\AwsException;
-
 /**
  * Zero-code-change cURL metrics tracking using function hooking
  * Requires uopz or runkit7 PHP extension
@@ -12,7 +9,6 @@ use Aws\Exception\AwsException;
 class CurlHook
 {
     private static $instance = null;
-    private $cloudWatchClient;
     private $config;
     private $activeCurls = [];
     private $hooked = false;
@@ -20,18 +16,12 @@ class CurlHook
     private function __construct(array $config = [])
     {
         $this->config = array_merge([
-            'namespace' => 'CurlMetrics',
-            'default_dimensions' => [],
             'enabled' => true,
             'debug' => false,
-            'aws' => []
         ], $config);
 
-        $awsConfig = array_merge([
-            'version' => 'latest',
-        ], $this->config['aws']);
-
-        $this->cloudWatchClient = new CloudWatchClient($awsConfig);
+        // Initialize CurlWrapper with the provided config
+        CurlWrapper::init($config);
     }
 
     public static function init(array $config = []): self
@@ -220,6 +210,7 @@ class CurlHook
 
     public function trackCurlInit($handle, $url): void
     {
+        // Delegate to CurlWrapper for consistent tracking
         $handleId = (int)$handle;
         $this->activeCurls[$handleId] = [
             'url' => $url,
@@ -229,6 +220,7 @@ class CurlHook
 
     public function trackCurlSetopt($handle, $option, $value): void
     {
+        // Delegate to CurlWrapper for consistent tracking
         $handleId = (int)$handle;
         if (isset($this->activeCurls[$handleId]) && $option === CURLOPT_URL) {
             $this->activeCurls[$handleId]['url'] = $value;
@@ -237,6 +229,7 @@ class CurlHook
 
     public function trackCurlExecStart($handle): void
     {
+        // Delegate to CurlWrapper for consistent tracking
         $handleId = (int)$handle;
         if (isset($this->activeCurls[$handleId])) {
             $this->activeCurls[$handleId]['start_time'] = microtime(true);
@@ -245,6 +238,8 @@ class CurlHook
 
     public function trackCurlExecEnd($handle): void
     {
+        // Use CurlWrapper's internal tracking mechanism
+        // We need to reconstruct the data that CurlWrapper would use
         $handleId = (int)$handle;
         if (!isset($this->activeCurls[$handleId]) || $this->activeCurls[$handleId]['start_time'] === null) {
             return;
@@ -257,74 +252,102 @@ class CurlHook
         $httpCode = curl_getinfo($handle, CURLINFO_HTTP_CODE);
         $url = $curlData['url'] ?? curl_getinfo($handle, CURLINFO_EFFECTIVE_URL);
 
-        if ($url) {
-            $this->recordMetrics(
-                $this->extractApiName($url),
-                $responseTime,
-                $httpCode >= 200 && $httpCode < 400
-            );
+        if ($url && CurlWrapper::isEnabled()) {
+            $success = $httpCode >= 200 && $httpCode < 400;
+
+            // Get the backend from CurlWrapper and publish metrics directly
+            $status = CurlWrapper::getBackendStatus();
+            if ($status['ready']) {
+                // Use reflection to access CurlWrapper's private backend and call publishMetrics
+                $reflection = new \ReflectionClass(CurlWrapper::class);
+                $backendProperty = $reflection->getProperty('backend');
+                $backendProperty->setAccessible(true);
+                $backend = $backendProperty->getValue();
+
+                $configProperty = $reflection->getProperty('config');
+                $configProperty->setAccessible(true);
+                $wrapperConfig = $configProperty->getValue();
+
+                // Build dimensions similar to CurlWrapper
+                $dimensions = [];
+                if (!empty($wrapperConfig['service'])) {
+                    $dimensions['service'] = $wrapperConfig['service'];
+                }
+
+                if (!empty($wrapperConfig['default_dimensions'])) {
+                    foreach ($wrapperConfig['default_dimensions'] as $dimension) {
+                        if (is_array($dimension) && isset($dimension['Name'], $dimension['Value'])) {
+                            $dimensions[$dimension['Name']] = $dimension['Value'];
+                        } elseif (is_string($dimension)) {
+                            $dimensions['tag'] = $dimension;
+                        }
+                    }
+                }
+
+                // Extract API name using CurlWrapper's logic
+                $apiName = $this->extractApiNameUsingWrapperLogic($url, $wrapperConfig);
+
+                $backend->publishMetrics($apiName, $responseTime, $success, $dimensions);
+            }
         }
     }
 
     public function trackCurlClose($handle): void
     {
+        // Clean up local tracking
         $handleId = (int)$handle;
         unset($this->activeCurls[$handleId]);
     }
 
-    private function extractApiName(string $url): string
+    private function extractApiNameUsingWrapperLogic(string $url, array $config): string
     {
         $parsedUrl = parse_url($url);
-        return $parsedUrl['host'] ?? 'unknown';
-    }
+        $host = $parsedUrl['host'] ?? 'unknown';
 
-    private function recordMetrics(string $apiName, float $responseTime, bool $success): void
-    {
-        $dimensions = array_merge($this->config['default_dimensions'], [
-            ['Name' => 'ApiName', 'Value' => $apiName]
-        ]);
-
-        $timestamp = new \DateTime();
-
-        $metricsData = [
-            [
-                'MetricName' => 'ResponseTime',
-                'Value' => $responseTime,
-                'Unit' => 'Milliseconds',
-                'Dimensions' => $dimensions,
-                'Timestamp' => $timestamp
-            ],
-            [
-                'MetricName' => 'RequestCount',
-                'Value' => 1,
-                'Unit' => 'Count',
-                'Dimensions' => $dimensions,
-                'Timestamp' => $timestamp
-            ],
-            [
-                'MetricName' => $success ? 'SuccessCount' : 'ErrorCount',
-                'Value' => 1,
-                'Unit' => 'Count',
-                'Dimensions' => $dimensions,
-                'Timestamp' => $timestamp
-            ]
-        ];
-
-        $this->publishMetrics($metricsData);
-    }
-
-    private function publishMetrics(array $metricsData): void
-    {
-        try {
-            $this->cloudWatchClient->putMetricData([
-                'Namespace' => $this->config['namespace'],
-                'MetricData' => $metricsData
-            ]);
-
-            $this->debug('Published ' . count($metricsData) . ' metrics to CloudWatch');
-        } catch (AwsException $e) {
-            error_log("Failed to publish metrics to CloudWatch: " . $e->getMessage());
+        // Use the same logic as CurlWrapper::extractApiName
+        if (empty($config['track_endpoints'])) {
+            return $host;
         }
+
+        if ($config['track_endpoints'] === true) {
+            return $this->buildEndpointName($parsedUrl);
+        }
+
+        if (is_array($config['track_endpoints'])) {
+            foreach ($config['track_endpoints'] as $pattern) {
+                if ($this->matchesPattern($host, $pattern)) {
+                    return $this->buildEndpointName($parsedUrl);
+                }
+            }
+        }
+
+        return $host;
+    }
+
+    private function buildEndpointName(array $parsedUrl): string
+    {
+        $host = $parsedUrl['host'] ?? 'unknown';
+        $path = $parsedUrl['path'] ?? '/';
+
+        $path = preg_replace('/\/+/', '/', trim($path, '/'));
+        if (empty($path)) {
+            $path = '/';
+        } else {
+            $path = '/' . $path;
+        }
+
+        return $host . $path;
+    }
+
+    private function matchesPattern(string $host, string $pattern): bool
+    {
+        if (strpos($pattern, '*') !== false) {
+            $regexPattern = str_replace('.', '\.', $pattern);
+            $regexPattern = str_replace('*', '.*', $regexPattern);
+            return preg_match('/^' . $regexPattern . '$/', $host) === 1;
+        }
+
+        return $host === $pattern;
     }
 
     private function debug(string $message): void
@@ -336,7 +359,23 @@ class CurlHook
 
     public function isEnabled(): bool
     {
-        return $this->hooked;
+        return $this->hooked && CurlWrapper::isEnabled();
+    }
+
+    /**
+     * Get the backend status from CurlWrapper
+     */
+    public function getBackendStatus(): array
+    {
+        return CurlWrapper::getBackendStatus();
+    }
+
+    /**
+     * Get configuration for debugging
+     */
+    public function getConfig(): array
+    {
+        return array_merge($this->config, CurlWrapper::getConfig());
     }
 
     public function __destruct()

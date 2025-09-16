@@ -2,46 +2,60 @@
 
 require_once __DIR__ . '/../vendor/autoload.php';
 
-use CurlTracker\CurlWrapper;
+use CurlTracker\CurlHook;
 
 function testBackend($backendType, $config)
 {
-    echo "\n=== Testing {$backendType} Backend ===\n";
+    echo "\n=== Testing $backendType Backend with CurlHook ===\n";
 
-    CurlWrapper::init($config);
+    // Initialize CurlHook which will initialize CurlWrapper internally
+    $hook = CurlHook::init($config);
 
-    $status = CurlWrapper::getBackendStatus();
+    try {
+        $hook->enable();
+        echo "✅ CurlHook enabled successfully\n";
+    } catch (Exception $e) {
+        echo "❌ Failed to enable CurlHook: " . $e->getMessage() . "\n";
+        echo "This is expected if uopz or runkit7 extensions are not available\n";
+        return;
+    }
+
+    $status = $hook->getBackendStatus();
     echo "Backend status: " . json_encode($status, JSON_PRETTY_PRINT) . "\n";
 
-    if (!CurlWrapper::isEnabled()) {
+    if (!$hook->isEnabled()) {
         echo "❌ Backend not ready. Skipping test.\n";
         return;
     }
 
-    echo "✅ Backend initialized successfully\n";
-    echo "Making test API call...\n";
+    echo "Making test API call with native curl functions (hooked)...\n";
 
-    // Make a test API call
-    $ch = CurlWrapper::curl_init('https://httpbin.org/delay/1');
-    CurlWrapper::curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    CurlWrapper::curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+    // Use native curl functions - they will be hooked automatically
+    $ch = curl_init('https://www.google.com/test-url');
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 5);
 
     $start = microtime(true);
-    $response = CurlWrapper::curl_exec($ch);
+    $response = curl_exec($ch);
     $duration = (microtime(true) - $start) * 1000;
 
-    $httpCode = CurlWrapper::curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    CurlWrapper::curl_close($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
 
-    echo "Response code: {$httpCode}\n";
+    echo "Response code: $httpCode\n";
     echo "Duration: " . round($duration, 2) . "ms\n";
 
     if ($response !== false) {
-        echo "✅ Metrics should have been published to {$backendType}\n";
+        echo "✅ Metrics should have been published to $backendType\n";
     } else {
         echo "❌ Request failed\n";
     }
+
+    // Clean up
+    $hook->disable();
+    echo "✅ CurlHook disabled\n";
 }
+
 
 // Test PushGateway (if available)
 $pushgatewayConfig = [
@@ -54,7 +68,7 @@ $pushgatewayConfig = [
         'script' => 'test-both-backends'
     ],
     'pushgateway' => [
-        'url' => 'http://localhost:9091',
+        'url' => 'https://monitoring.uengage.in/pushgateway',
         'job_name' => 'curl_tracker_test',
         'instance' => 'test-script',
         'timeout' => 5
