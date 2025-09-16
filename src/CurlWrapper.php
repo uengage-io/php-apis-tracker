@@ -24,6 +24,7 @@ class CurlWrapper
             'service' => null, // Service name for the service dimension
             'default_dimensions' => [],
             'track_endpoints' => false, // false, true, or array of host patterns
+            'sample_rate' => 100, // Percentage of requests to track (0 to 100)
             // CloudWatch specific config
             'cloudwatch' => [
                 'aws_region' => 'us-east-1',
@@ -44,6 +45,12 @@ class CurlWrapper
 
         if (!self::$config['enabled']) {
             return;
+        }
+
+        // Validate sample_rate
+        $sampleRate = self::$config['sample_rate'];
+        if (!is_numeric($sampleRate) || $sampleRate < 0 || $sampleRate > 100) {
+            throw new \InvalidArgumentException("sample_rate must be a number between 0 and 100, got: {$sampleRate}");
         }
 
         self::initializeBackend();
@@ -189,6 +196,11 @@ class CurlWrapper
             return;
         }
 
+        // Apply sampling logic
+        if (!self::shouldSample()) {
+            return;
+        }
+
         $curlInfo = self::$activeCurls[$handleId];
         $endTime = microtime(true);
         $responseTime = ($endTime - $curlInfo['start_time']) * 1000;
@@ -286,6 +298,24 @@ class CurlWrapper
         }
 
         return $dimensions;
+    }
+
+    private static function shouldSample(): bool
+    {
+        $sampleRate = self::$config['sample_rate'];
+
+        // If sample rate is 100, always sample
+        if ($sampleRate >= 100) {
+            return true;
+        }
+
+        // If sample rate is 0, never sample
+        if ($sampleRate <= 0) {
+            return false;
+        }
+
+        // Generate random number between 1-100 and check if it's within sample rate
+        return (mt_rand(1, 100) <= $sampleRate);
     }
 
     public static function isEnabled(): bool

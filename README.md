@@ -7,12 +7,12 @@
 
 ## Features
 
-- =€ **Zero Code Changes**: Automatic cURL hooking using PHP extensions
-- =Ê **Multiple Backends**: CloudWatch, PushGateway, or extend with custom backends
-- ¡ **Low Overhead**: Minimal performance impact on your applications  
+- =ï¿½ **Zero Code Changes**: Automatic cURL hooking using PHP extensions
+- =ï¿½ **Multiple Backends**: CloudWatch, PushGateway, or extend with custom backends
+- ï¿½ **Low Overhead**: Minimal performance impact on your applications  
 - =' **Flexible Configuration**: Environment-specific settings and dimensions
-- =á **Error Handling**: Graceful degradation when backends are unavailable
-- =È **Rich Metrics**: Response time, request count, success/error rates
+- =ï¿½ **Error Handling**: Graceful degradation when backends are unavailable
+- =ï¿½ **Rich Metrics**: Response time, request count, success/error rates
 
 ## Quick Start
 
@@ -132,11 +132,32 @@ All with dimensions: `ApiName`, plus your custom dimensions.
 
 ## Advanced Configuration
 
+### Sample Rate Configuration
+
+Control what percentage of requests are tracked to reduce overhead:
+
+```php
+CurlWrapper::init([
+    'backend' => 'pushgateway',
+    'sample_rate' => 25, // Track only 25% of requests
+    'pushgateway' => [
+        'url' => 'http://localhost:9091'
+    ]
+]);
+```
+
+**Sample Rate Options:**
+- `100` (default): Track all requests
+- `50`: Track 50% of requests randomly
+- `10`: Track 10% of requests randomly
+- `0`: Track no requests (effectively disabled)
+
 ### Custom Dimensions/Labels
 
 ```php
 CurlWrapper::init([
     'backend' => 'pushgateway',
+    'sample_rate' => 100,
     'default_dimensions' => [
         'environment' => 'production',
         'version' => '1.2.3',
@@ -159,6 +180,7 @@ $config = [
     'backend' => $_ENV['METRICS_BACKEND'] ?? 'pushgateway',
     'enabled' => $_ENV['METRICS_ENABLED'] ?? true,
     'debug' => $_ENV['METRICS_DEBUG'] ?? false,
+    'sample_rate' => $_ENV['METRICS_SAMPLE_RATE'] ?? 100,
 ];
 
 if ($config['backend'] === 'pushgateway') {
@@ -203,6 +225,7 @@ use CurlTracker\CurlHook;
 
 CurlHook::init([
     'backend' => 'pushgateway',
+    'sample_rate' => 50, // Track 50% of requests
     'pushgateway' => [
         'url' => 'http://localhost:9091'
     ]
@@ -231,7 +254,7 @@ Now ALL cURL calls in your application are automatically tracked!
 
 ### CloudWatch
 
-1. **AWS Console**: CloudWatch ’ Metrics ’ Custom Namespaces
+1. **AWS Console**: CloudWatch ï¿½ Metrics ï¿½ Custom Namespaces
 2. **CloudWatch Insights**:
    ```sql
    SELECT ApiName, AVG(ResponseTime), COUNT(RequestCount)
@@ -285,10 +308,11 @@ Check your error logs for detailed information about metrics publishing.
 ## Performance Impact
 
 CurlTracker is designed for minimal overhead:
-- **PushGateway**: ~2-5ms per request
-- **CloudWatch**: ~10-20ms per request (due to AWS API calls)
+- **PushGateway**: ~2-5ms per tracked request
+- **CloudWatch**: ~10-20ms per tracked request (due to AWS API calls)
 - **Memory**: <1MB additional memory usage
 - **No impact** when backends are disabled or unavailable
+- **Reduced overhead** with sample rates below 100% (e.g., 25% sample rate = 75% fewer metric calls)
 
 ## Example Projects
 
@@ -327,7 +351,7 @@ MIT License. See [LICENSE](LICENSE) for details.
 
 ### v1.0.3
 - = Fixed CloudWatch dimension handling
-- =Ú Improved documentation
+- =ï¿½ Improved documentation
 
 ---
 

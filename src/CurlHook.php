@@ -268,6 +268,11 @@ class CurlHook
                 $configProperty->setAccessible(true);
                 $wrapperConfig = $configProperty->getValue();
 
+                // Apply sampling logic (same as CurlWrapper)
+                if (!$this->shouldSample($wrapperConfig)) {
+                    return;
+                }
+
                 // Build dimensions similar to CurlWrapper
                 $dimensions = [];
                 if (!empty($wrapperConfig['service'])) {
@@ -348,6 +353,24 @@ class CurlHook
         }
 
         return $host === $pattern;
+    }
+
+    private function shouldSample(array $config): bool
+    {
+        $sampleRate = $config['sample_rate'] ?? 100;
+
+        // If sample rate is 100, always sample
+        if ($sampleRate >= 100) {
+            return true;
+        }
+
+        // If sample rate is 0, never sample
+        if ($sampleRate <= 0) {
+            return false;
+        }
+
+        // Generate random number between 1-100 and check if it's within sample rate
+        return (mt_rand(1, 100) <= $sampleRate);
     }
 
     private function debug(string $message): void
