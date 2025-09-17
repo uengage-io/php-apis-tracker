@@ -401,6 +401,72 @@ class CurlHook
         return array_merge($this->config, CurlWrapper::getConfig());
     }
 
+    /**
+     * Publish a custom metric to the configured backend
+     *
+     * @param string $metricName The name of the metric
+     * @param float $value The metric value
+     * @param array $labels Additional labels/dimensions for the metric
+     * @return bool True if the metric was published successfully, false otherwise
+     */
+    public function publishMetric(string $metricName, float $value, array $labels = []): bool
+    {
+        if (!$this->config['enabled'] || !CurlWrapper::isEnabled()) {
+            return false;
+        }
+
+        $status = CurlWrapper::getBackendStatus();
+        if (!$status['ready']) {
+            return false;
+        }
+
+        try {
+            // Use reflection to access CurlWrapper's private backend
+            $reflection = new \ReflectionClass(CurlWrapper::class);
+            $backendProperty = $reflection->getProperty('backend');
+            $backendProperty->setAccessible(true);
+            $backend = $backendProperty->getValue();
+
+            $configProperty = $reflection->getProperty('config');
+            $configProperty->setAccessible(true);
+            $wrapperConfig = $configProperty->getValue();
+
+            // Apply sampling logic (same as CurlWrapper)
+            if (!$this->shouldSample($wrapperConfig)) {
+                return false;
+            }
+
+            // Build dimensions similar to CurlWrapper
+            $dimensions = [];
+            if (!empty($wrapperConfig['service'])) {
+                $dimensions['service'] = $wrapperConfig['service'];
+            }
+
+            if (!empty($wrapperConfig['default_dimensions'])) {
+                foreach ($wrapperConfig['default_dimensions'] as $dimension) {
+                    if (is_array($dimension) && isset($dimension['Name'], $dimension['Value'])) {
+                        $dimensions[$dimension['Name']] = $dimension['Value'];
+                    } elseif (is_string($dimension)) {
+                        $dimensions['tag'] = $dimension;
+                    }
+                }
+            }
+
+            // Merge with user-provided labels
+            $dimensions = array_merge($dimensions, $labels);
+
+            // For custom metrics, we treat them as successful API calls with the metric name as the API name
+            $backend->publishMetrics($metricName, $value, true, $dimensions);
+
+            return true;
+        } catch (\Throwable $e) {
+            if ($this->config['debug']) {
+                error_log('[CurlTracker] Failed to publish custom metric: ' . $e->getMessage());
+            }
+            return false;
+        }
+    }
+
     public function __destruct()
     {
         if ($this->hooked) {
