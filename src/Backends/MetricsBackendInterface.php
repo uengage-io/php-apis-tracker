@@ -25,17 +25,15 @@ interface MetricsBackendInterface
     /**
      * Publish metrics to the backend
      *
-     * @param string $apiName The API name/identifier
-     * @param float $responseTime Response time in milliseconds
-     * @param bool $success Whether the request was successful
-     * @param array $additionalDimensions Additional dimensions to include
+     * @param string $metricName The name of the metric
+     * @param float $value The metric value
+     * @param array $dimensions Dimensions/labels for the metric
      * @return bool Success status
      */
     public function publishMetrics(
-        string $apiName,
-        float $responseTime,
-        bool $success,
-        array $additionalDimensions = []
+        string $metricName,
+        float $value,
+        array $dimensions = []
     ): bool;
 
     /**

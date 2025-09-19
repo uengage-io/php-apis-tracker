@@ -252,7 +252,7 @@ class CurlHook
         $httpCode = curl_getinfo($handle, CURLINFO_HTTP_CODE);
         $url = $curlData['url'] ?? curl_getinfo($handle, CURLINFO_EFFECTIVE_URL);
 
-        if ($url && CurlWrapper::isEnabled()) {
+        if ($url && CurlWrapper::isEnabled() && !$this->isUrlExcluded($url)) {
             $success = $httpCode >= 200 && $httpCode < 400;
 
             // Get the backend from CurlWrapper and publish metrics directly
@@ -292,7 +292,29 @@ class CurlHook
                 // Extract API name using CurlWrapper's logic
                 $apiName = $this->extractApiNameUsingWrapperLogic($url, $wrapperConfig);
 
-                $backend->publishMetrics($apiName, $responseTime, $success, $dimensions);
+                // Add API name and endpoint to dimensions
+                $dimensions['api_name'] = $apiName;
+
+                // Parse host and endpoint from apiName for backward compatibility
+                $host = $apiName;
+                $endpoint = '*';
+                if (strpos($apiName, '/') !== false) {
+                    $parts = explode('/', $apiName, 2);
+                    $host = $parts[0];
+                    $endpoint = '/' . $parts[1];
+                }
+                $dimensions['host'] = $host;
+                $dimensions['endpoint'] = $endpoint;
+
+                // Publish response time metric
+                $backend->publishMetrics('api_response_time', $responseTime, $dimensions);
+
+                // Publish success/error metrics
+                if ($success) {
+                    $backend->publishMetrics('api_success', 1, $dimensions);
+                } else {
+                    $backend->publishMetrics('api_error', 1, $dimensions);
+                }
             }
         }
     }
@@ -371,6 +393,25 @@ class CurlHook
 
         // Generate random number between 1-100 and check if it's within sample rate
         return (mt_rand(1, 100) <= $sampleRate);
+    }
+
+    private function isUrlExcluded(string $url): bool
+    {
+        $wrapperConfig = CurlWrapper::getConfig();
+        if (empty($wrapperConfig['excluded_urls'])) {
+            return false;
+        }
+
+        $parsedUrl = parse_url($url);
+        $host = $parsedUrl['host'] ?? '';
+
+        foreach ($wrapperConfig['excluded_urls'] as $excludedPattern) {
+            if ($this->matchesPattern($host, $excludedPattern)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function debug(string $message): void
@@ -455,8 +496,8 @@ class CurlHook
             // Merge with user-provided labels
             $dimensions = array_merge($dimensions, $labels);
 
-            // For custom metrics, we treat them as successful API calls with the metric name as the API name
-            $backend->publishMetrics($metricName, $value, true, $dimensions);
+            // Publish the custom metric
+            $backend->publishMetrics($metricName, $value, $dimensions);
 
             return true;
         } catch (\Throwable $e) {

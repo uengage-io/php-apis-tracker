@@ -51,6 +51,34 @@ function testBackend($backendType, $config)
         echo "❌ Request failed\n";
     }
 
+    // Example: Publish a custom metric
+    echo "\nPublishing custom metrics...\n";
+
+    // Publish a custom business metric
+    $customMetricSuccess = $hook->publishMetric('business_transactions_processed', 42.5, [
+        'transaction_type' => 'payment',
+        'currency' => 'USD',
+        'region' => 'us-west'
+    ]);
+
+    if ($customMetricSuccess) {
+        echo "✅ Custom metric 'business_transactions_processed' published successfully\n";
+    } else {
+        echo "❌ Failed to publish custom metric\n";
+    }
+
+    // Publish another custom metric (e.g., processing time)
+    $processingTimeSuccess = $hook->publishMetric('data_processing_duration_ms', 1250.0, [
+        'processor' => 'batch_job',
+        'data_source' => 'user_activity'
+    ]);
+
+    if ($processingTimeSuccess) {
+        echo "✅ Custom metric 'data_processing_duration_ms' published successfully\n";
+    } else {
+        echo "❌ Failed to publish processing time metric\n";
+    }
+
     // Clean up
     $hook->disable();
     echo "✅ CurlHook disabled\n";

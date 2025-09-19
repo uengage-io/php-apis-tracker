@@ -25,6 +25,7 @@ class CurlWrapper
             'default_dimensions' => [],
             'track_endpoints' => false, // false, true, or array of host patterns
             'sample_rate' => 100, // Percentage of requests to track (0 to 100)
+            'excluded_urls' => ['monitoring.uengage.in'], // URLs to exclude from tracking
             // CloudWatch specific config
             'cloudwatch' => [
                 'aws_region' => 'us-east-1',
@@ -208,12 +209,34 @@ class CurlWrapper
         $httpCode = curl_getinfo($handle, CURLINFO_HTTP_CODE);
         $url = $curlInfo['url'] ?? curl_getinfo($handle, CURLINFO_EFFECTIVE_URL);
 
-        if ($url) {
+        if ($url && !self::isUrlExcluded($url)) {
             $apiName = self::extractApiName($url);
             $success = $httpCode >= 200 && $httpCode < 400;
-            $additionalDimensions = self::buildAdditionalDimensions();
+            $dimensions = self::buildAdditionalDimensions();
 
-            self::$backend->publishMetrics($apiName, $responseTime, $success, $additionalDimensions);
+            // Add API name and endpoint to dimensions
+            $dimensions['api_name'] = $apiName;
+
+            // Parse host and endpoint from apiName for backward compatibility
+            $host = $apiName;
+            $endpoint = '*';
+            if (strpos($apiName, '/') !== false) {
+                $parts = explode('/', $apiName, 2);
+                $host = $parts[0];
+                $endpoint = '/' . $parts[1];
+            }
+            $dimensions['host'] = $host;
+            $dimensions['endpoint'] = $endpoint;
+
+            // Publish response time metric
+            self::$backend->publishMetrics('api_response_time', $responseTime, $dimensions);
+
+            // Publish success/error metrics
+            if ($success) {
+                self::$backend->publishMetrics('api_success', 1, $dimensions);
+            } else {
+                self::$backend->publishMetrics('api_error', 1, $dimensions);
+            }
         }
     }
 
@@ -316,6 +339,24 @@ class CurlWrapper
 
         // Generate random number between 1-100 and check if it's within sample rate
         return (mt_rand(1, 100) <= $sampleRate);
+    }
+
+    private static function isUrlExcluded(string $url): bool
+    {
+        if (empty(self::$config['excluded_urls'])) {
+            return false;
+        }
+
+        $parsedUrl = parse_url($url);
+        $host = $parsedUrl['host'] ?? '';
+
+        foreach (self::$config['excluded_urls'] as $excludedPattern) {
+            if (self::matchesPattern($host, $excludedPattern)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public static function isEnabled(): bool

@@ -3,7 +3,7 @@
     "description": "Automatically track cURL API response times and publish metrics to AWS CloudWatch or Prometheus PushGateway with zero code changes",
     "type": "library",
     "license": "MIT",
-    "version": "3.0.0",
+    "version": "3.0.1",
     "keywords": ["curl", "api", "metrics", "cloudwatch", "aws", "prometheus", "pushgateway", "monitoring", "performance"],
     "authors": [
         {
@@ -13,7 +13,8 @@
     ],
     "require": {
         "php": ">=7.1",
-        "ext-curl": "*"
+        "ext-curl": "*",
+        "ext-json": "*"
     },
     "require-dev": {
         "aws/aws-sdk-php": "^3.0"

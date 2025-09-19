@@ -48,56 +48,26 @@ class PushGatewayBackend implements MetricsBackendInterface
      * Publish metrics to PushGateway
      */
     public function publishMetrics(
-        string $apiName,
-        float $responseTime,
-        bool $success,
-        array $additionalDimensions = []
+        string $metricName,
+        float $value,
+        array $dimensions = []
     ): bool {
         if (!$this->isReady()) {
             return false;
         }
 
-        // Parse host and endpoint from apiName
-        $host = $apiName;
-        $endpoint = '*';
-        if (strpos($apiName, '/') !== false) {
-            $parts = explode('/', $apiName, 2);
-            $host = $parts[0];
-            $endpoint = '/' . $parts[1];
-        }
+        // Build labels with default labels and provided dimensions
+        $labels = array_merge($this->config['default_labels'], []);
 
-        // Build labels with the new naming convention
-        $labels = array_merge($this->config['default_labels'], [
-            'host' => $this->sanitizeLabelValue($host),
-            'endpoint' => $this->sanitizeLabelValue($endpoint)
-        ]);
-
-        // Add service label if provided
-        if (isset($additionalDimensions['service'])) {
-            $labels['service'] = $this->sanitizeLabelValue($additionalDimensions['service']);
-            unset($additionalDimensions['service']);
-        }
-
-        // Add any other additional dimensions as labels
-        foreach ($additionalDimensions as $name => $value) {
-            $labels[$this->sanitizeLabelName($name)] = $this->sanitizeLabelValue($value);
+        // Add dimensions as labels
+        foreach ($dimensions as $name => $dimensionValue) {
+            $labels[$this->sanitizeLabelName($name)] = $this->sanitizeLabelValue((string)$dimensionValue);
         }
 
         $labelString = $this->buildLabelString($labels);
 
-        // Prepare metrics in Prometheus format with new metric names
-        $metrics = [
-            "api_response_time{$labelString} {$responseTime}"
-        ];
-
-        // Add success/error metrics
-        if ($success) {
-            $metrics[] = "api_success{$labelString} 1";
-        } else {
-            $metrics[] = "api_error{$labelString} 1";
-        }
-
-        $metricsData = implode("\n", $metrics) . "\n";
+        // Prepare metric in Prometheus format
+        $metricsData = "{$metricName}{$labelString} {$value}\n";
 
         return $this->pushMetrics($metricsData);
     }
@@ -157,7 +127,7 @@ class PushGatewayBackend implements MetricsBackendInterface
         }
 
         if ($this->config['debug']) {
-            error_log("[CurlTracker] Successfully pushed metrics to PushGateway");
+            error_log("[CurlTracker] Successfully pushed metrics to PushGateway. Metric data:".PHP_EOL.json_encode($metricsData));
         }
 
         return true;
