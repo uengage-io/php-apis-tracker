@@ -128,6 +128,10 @@ class CurlHook
         }
 
         try {
+            if(file_exists(BASEPATH.'core/Controller.php')){
+                require_once BASEPATH.'core/Controller.php';
+            }
+
             $rename('curl_init', '_original_curl_init');
             $rename('curl_setopt', '_original_curl_setopt');
             $rename('curl_exec', '_original_curl_exec');
