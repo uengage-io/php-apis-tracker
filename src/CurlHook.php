@@ -85,6 +85,21 @@ class CurlHook
                 \curl_close($handle);
             }, true);
 
+            // Hook curl_copy_handle
+            uopz_set_return('curl_copy_handle', function($handle) {
+                $newHandle = \curl_copy_handle($handle);
+                if ($newHandle) {
+                    CurlWrapper::trackCopyHandle($handle, $newHandle);
+                }
+                return $newHandle;
+            }, true);
+
+            // Hook curl_reset
+            uopz_set_return('curl_reset', function($handle) {
+                CurlWrapper::trackReset($handle);
+                \curl_reset($handle);
+            }, true);
+
             $this->hooked = true;
             $this->debug('Enabled cURL hooking via uopz');
             return true;
@@ -107,6 +122,8 @@ class CurlHook
             uopz_unset_return('curl_setopt');
             uopz_unset_return('curl_exec');
             uopz_unset_return('curl_close');
+            uopz_unset_return('curl_copy_handle');
+            uopz_unset_return('curl_reset');
         }
 
         $this->hooked = false;

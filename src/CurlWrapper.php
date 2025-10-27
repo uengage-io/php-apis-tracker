@@ -191,6 +191,69 @@ class CurlWrapper
         return curl_errno($handle);
     }
 
+    public static function curl_copy_handle($handle)
+    {
+        $newHandle = curl_copy_handle($handle);
+
+        if ($newHandle && self::$backend) {
+            $handleId = (int)$handle;
+            $newHandleId = (int)$newHandle;
+
+            // Copy tracking data from original handle to new handle
+            if (isset(self::$activeCurls[$handleId])) {
+                self::$activeCurls[$newHandleId] = self::$activeCurls[$handleId];
+            }
+        }
+
+        return $newHandle;
+    }
+
+    public static function curl_reset($handle): void
+    {
+        curl_reset($handle);
+
+        if (self::$backend) {
+            $handleId = (int)$handle;
+            // Reset tracking data but keep the handle entry
+            if (isset(self::$activeCurls[$handleId])) {
+                self::$activeCurls[$handleId] = [
+                    'url' => null,
+                    'start_time' => null
+                ];
+            }
+        }
+    }
+
+    public static function curl_escape($handle, string $str): string
+    {
+        return curl_escape($handle, $str);
+    }
+
+    public static function curl_unescape($handle, string $str): string
+    {
+        return curl_unescape($handle, $str);
+    }
+
+    public static function curl_pause($handle, int $bitmask): int
+    {
+        return curl_pause($handle, $bitmask);
+    }
+
+    public static function curl_upkeep($handle): bool
+    {
+        return curl_upkeep($handle);
+    }
+
+    public static function curl_strerror(int $error_code): ?string
+    {
+        return curl_strerror($error_code);
+    }
+
+    public static function curl_version(?int $age = null)
+    {
+        return curl_version($age);
+    }
+
     private static function trackMetrics($handle, int $handleId): void
     {
         if (!isset(self::$activeCurls[$handleId]) || self::$activeCurls[$handleId]['start_time'] === null) {
@@ -488,6 +551,44 @@ class CurlWrapper
         if (self::$backend) {
             $handleId = (int)$handle;
             unset(self::$activeCurls[$handleId]);
+        }
+    }
+
+    /**
+     * Track curl handle copy (for use by hooks)
+     *
+     * @param resource $handle The original cURL handle
+     * @param resource $newHandle The new copied cURL handle
+     */
+    public static function trackCopyHandle($handle, $newHandle): void
+    {
+        if (self::$backend) {
+            $handleId = (int)$handle;
+            $newHandleId = (int)$newHandle;
+
+            // Copy tracking data from original handle to new handle
+            if (isset(self::$activeCurls[$handleId])) {
+                self::$activeCurls[$newHandleId] = self::$activeCurls[$handleId];
+            }
+        }
+    }
+
+    /**
+     * Track curl handle reset (for use by hooks)
+     *
+     * @param resource $handle The cURL handle
+     */
+    public static function trackReset($handle): void
+    {
+        if (self::$backend) {
+            $handleId = (int)$handle;
+            // Reset tracking data but keep the handle entry
+            if (isset(self::$activeCurls[$handleId])) {
+                self::$activeCurls[$handleId] = [
+                    'url' => null,
+                    'start_time' => null
+                ];
+            }
         }
     }
 }
