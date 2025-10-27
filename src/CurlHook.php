@@ -4,13 +4,12 @@ namespace CurlTracker;
 
 /**
  * Zero-code-change cURL metrics tracking using function hooking
- * Requires uopz or runkit7 PHP extension
+ * Requires uopz PHP extension
  */
 class CurlHook
 {
     private static $instance = null;
     private $config;
-    private $activeCurls = [];
     private $hooked = false;
 
     private function __construct(array $config = [])
@@ -43,23 +42,58 @@ class CurlHook
             return $this->hooked;
         }
 
-        // Try uopz first (preferred)
-        if (extension_loaded('uopz') && $this->enableUopzHooking()) {
+        if (!extension_loaded('uopz')) {
+            throw new \RuntimeException(
+                'Cannot enable cURL hooking: uopz extension is not available. ' .
+                'Install it with: pecl install uopz'
+            );
+        }
+
+        if (!function_exists('uopz_set_return')) {
+            throw new \RuntimeException(
+                'Cannot enable cURL hooking: uopz_set_return function is not available.'
+            );
+        }
+
+        try {
+            // Hook curl_init
+            uopz_set_return('curl_init', function($url = null) {
+                $handle = \curl_init($url);
+                if ($handle) {
+                    CurlWrapper::trackInit($handle, $url);
+                }
+                return $handle;
+            }, true);
+
+            // Hook curl_setopt
+            uopz_set_return('curl_setopt', function($handle, $option, $value) {
+                CurlWrapper::trackSetopt($handle, $option, $value);
+                return \curl_setopt($handle, $option, $value);
+            }, true);
+
+            // Hook curl_exec
+            uopz_set_return('curl_exec', function($handle) {
+                CurlWrapper::trackExecStart($handle);
+                $result = \curl_exec($handle);
+                CurlWrapper::trackExecEnd($handle);
+                return $result;
+            }, true);
+
+            // Hook curl_close
+            uopz_set_return('curl_close', function($handle) {
+                CurlWrapper::trackClose($handle);
+                \curl_close($handle);
+            }, true);
+
             $this->hooked = true;
             $this->debug('Enabled cURL hooking via uopz');
             return true;
-        }
 
-        // Fallback to runkit
-        if ((extension_loaded('runkit7') || extension_loaded('runkit')) && $this->enableRunkitHooking()) {
-            $this->hooked = true;
-            $this->debug('Enabled cURL hooking via runkit');
-            return true;
+        } catch (\Throwable $e) {
+            throw new \RuntimeException(
+                'Failed to enable cURL hooking: ' . $e->getMessage()
+            );
         }
-
-        throw new \RuntimeException(
-            'Cannot enable cURL hooking: Neither uopz nor runkit7 extension is available.'
-        );
     }
 
     public function disable(): void
@@ -68,354 +102,15 @@ class CurlHook
             return;
         }
 
-        if (extension_loaded('uopz')) {
-            $this->disableUopzHooking();
-        } elseif (extension_loaded('runkit7') || extension_loaded('runkit')) {
-            $this->disableRunkitHooking();
-        }
-
-        $this->hooked = false;
-        $this->debug('Disabled cURL hooking');
-    }
-
-    private function enableUopzHooking(): bool
-    {
-        if (!function_exists('uopz_set_return')) {
-            return false;
-        }
-
-        try {
-            $self = $this;
-            
-            uopz_set_return('curl_init', function($url = null) use ($self) {
-                $handle = \curl_init($url);
-                if ($handle) {
-                    $self->trackCurlInit($handle, $url);
-                }
-                return $handle;
-            }, true);
-
-            uopz_set_return('curl_setopt', function($handle, $option, $value) use ($self) {
-                $self->trackCurlSetopt($handle, $option, $value);
-                return \curl_setopt($handle, $option, $value);
-            }, true);
-
-            uopz_set_return('curl_exec', function($handle) use ($self) {
-                $self->trackCurlExecStart($handle);
-                $result = \curl_exec($handle);
-                $self->trackCurlExecEnd($handle);
-                return $result;
-            }, true);
-
-            uopz_set_return('curl_close', function($handle) use ($self) {
-                $self->trackCurlClose($handle);
-                \curl_close($handle);
-            }, true);
-
-            return true;
-        } catch (\Throwable $e) {
-            return false;
-        }
-    }
-
-    private function enableRunkitHooking(): bool
-    {
-        $rename = function_exists('runkit7_function_rename') ? 'runkit7_function_rename' : 'runkit_function_rename';
-        $add = function_exists('runkit7_function_add') ? 'runkit7_function_add' : 'runkit_function_add';
-
-        if (!function_exists($rename) || !function_exists($add)) {
-            return false;
-        }
-
-        try {
-            if(file_exists(BASEPATH.'core/Controller.php')){
-                require_once BASEPATH.'core/Controller.php';
-            }
-
-            $rename('curl_init', '_original_curl_init');
-            $rename('curl_setopt', '_original_curl_setopt');
-            $rename('curl_exec', '_original_curl_exec');
-            $rename('curl_close', '_original_curl_close');
-
-            $add('curl_init', '$url = null', '
-                $handle = _original_curl_init($url);
-                $tracker = \\CurlTracker\\CurlHook::getInstance();
-                if ($tracker && $handle) {
-                    $tracker->trackCurlInit($handle, $url);
-                }
-                return $handle;
-            ');
-
-            $add('curl_setopt', '$handle, $option, $value', '
-                $tracker = \\CurlTracker\\CurlHook::getInstance();
-                if ($tracker) {
-                    $tracker->trackCurlSetopt($handle, $option, $value);
-                }
-                return _original_curl_setopt($handle, $option, $value);
-            ');
-
-            $add('curl_exec', '$handle', '
-                $tracker = \\CurlTracker\\CurlHook::getInstance();
-                if ($tracker) {
-                    $tracker->trackCurlExecStart($handle);
-                }
-                $result = _original_curl_exec($handle);
-                if ($tracker) {
-                    $tracker->trackCurlExecEnd($handle);
-                }
-                return $result;
-            ');
-
-            $add('curl_close', '$handle', '
-                $tracker = \\CurlTracker\\CurlHook::getInstance();
-                if ($tracker) {
-                    $tracker->trackCurlClose($handle);
-                }
-                _original_curl_close($handle);
-            ');
-
-            return true;
-        } catch (\Throwable $e) {
-            return false;
-        }
-    }
-
-    private function disableUopzHooking(): void
-    {
         if (function_exists('uopz_unset_return')) {
             uopz_unset_return('curl_init');
             uopz_unset_return('curl_setopt');
             uopz_unset_return('curl_exec');
             uopz_unset_return('curl_close');
         }
-    }
 
-    private function disableRunkitHooking(): void
-    {
-        $rename = function_exists('runkit7_function_rename') ? 'runkit7_function_rename' : 'runkit_function_rename';
-        $remove = function_exists('runkit7_function_remove') ? 'runkit7_function_remove' : 'runkit_function_remove';
-
-        if (function_exists($remove)) {
-            try {
-                $remove('curl_init');
-                $remove('curl_setopt');
-                $remove('curl_exec');
-                $remove('curl_close');
-
-                $rename('_original_curl_init', 'curl_init');
-                $rename('_original_curl_setopt', 'curl_setopt');
-                $rename('_original_curl_exec', 'curl_exec');
-                $rename('_original_curl_close', 'curl_close');
-            } catch (\Throwable $e) {
-                // Ignore cleanup errors
-            }
-        }
-    }
-
-    public function trackCurlInit($handle, $url): void
-    {
-        // Delegate to CurlWrapper for consistent tracking
-        $handleId = (int)$handle;
-        $this->activeCurls[$handleId] = [
-            'url' => $url,
-            'start_time' => null
-        ];
-    }
-
-    public function trackCurlSetopt($handle, $option, $value): void
-    {
-        // Delegate to CurlWrapper for consistent tracking
-        $handleId = (int)$handle;
-        if (isset($this->activeCurls[$handleId]) && $option === CURLOPT_URL) {
-            $this->activeCurls[$handleId]['url'] = $value;
-        }
-    }
-
-    public function trackCurlExecStart($handle): void
-    {
-        // Delegate to CurlWrapper for consistent tracking
-        $handleId = (int)$handle;
-        if (isset($this->activeCurls[$handleId])) {
-            $this->activeCurls[$handleId]['start_time'] = microtime(true);
-        }
-    }
-
-    public function trackCurlExecEnd($handle): void
-    {
-        // Use CurlWrapper's internal tracking mechanism
-        // We need to reconstruct the data that CurlWrapper would use
-        $handleId = (int)$handle;
-        if (!isset($this->activeCurls[$handleId]) || $this->activeCurls[$handleId]['start_time'] === null) {
-            return;
-        }
-
-        $curlData = $this->activeCurls[$handleId];
-        $endTime = microtime(true);
-        $responseTime = ($endTime - $curlData['start_time']) * 1000;
-
-        $httpCode = curl_getinfo($handle, CURLINFO_HTTP_CODE);
-        $url = $curlData['url'] ?? curl_getinfo($handle, CURLINFO_EFFECTIVE_URL);
-
-        if ($url && CurlWrapper::isEnabled() && !$this->isUrlExcluded($url)) {
-            $success = $httpCode >= 200 && $httpCode < 400;
-
-            // Get the backend from CurlWrapper and publish metrics directly
-            $status = CurlWrapper::getBackendStatus();
-            if ($status['ready']) {
-                // Use reflection to access CurlWrapper's private backend and call publishMetrics
-                $reflection = new \ReflectionClass(CurlWrapper::class);
-                $backendProperty = $reflection->getProperty('backend');
-                $backendProperty->setAccessible(true);
-                $backend = $backendProperty->getValue();
-
-                $configProperty = $reflection->getProperty('config');
-                $configProperty->setAccessible(true);
-                $wrapperConfig = $configProperty->getValue();
-
-                // Apply sampling logic (same as CurlWrapper)
-                if (!$this->shouldSample($wrapperConfig)) {
-                    return;
-                }
-
-                // Build dimensions similar to CurlWrapper
-                $dimensions = [];
-                if (!empty($wrapperConfig['service'])) {
-                    $dimensions['service'] = $wrapperConfig['service'];
-                }
-
-                if (!empty($wrapperConfig['default_dimensions'])) {
-                    foreach ($wrapperConfig['default_dimensions'] as $dimension) {
-                        if (is_array($dimension) && isset($dimension['Name'], $dimension['Value'])) {
-                            $dimensions[$dimension['Name']] = $dimension['Value'];
-                        } elseif (is_string($dimension)) {
-                            $dimensions['tag'] = $dimension;
-                        }
-                    }
-                }
-
-                // Extract API name using CurlWrapper's logic
-                $apiName = $this->extractApiNameUsingWrapperLogic($url, $wrapperConfig);
-
-                // Add API name and endpoint to dimensions
-                $dimensions['api_name'] = $apiName;
-
-                // Parse host and endpoint from apiName for backward compatibility
-                $host = $apiName;
-                $endpoint = '*';
-                if (strpos($apiName, '/') !== false) {
-                    $parts = explode('/', $apiName, 2);
-                    $host = $parts[0];
-                    $endpoint = '/' . $parts[1];
-                }
-                $dimensions['host'] = $host;
-                $dimensions['endpoint'] = $endpoint;
-
-                // Publish response time metric
-                $backend->publishMetrics('api_response_time', $responseTime, $dimensions);
-
-                // Publish success/error metrics
-                if ($success) {
-                    $backend->publishMetrics('api_success', 1, $dimensions);
-                } else {
-                    $backend->publishMetrics('api_error', 1, $dimensions);
-                }
-            }
-        }
-    }
-
-    public function trackCurlClose($handle): void
-    {
-        // Clean up local tracking
-        $handleId = (int)$handle;
-        unset($this->activeCurls[$handleId]);
-    }
-
-    private function extractApiNameUsingWrapperLogic(string $url, array $config): string
-    {
-        $parsedUrl = parse_url($url);
-        $host = $parsedUrl['host'] ?? 'unknown';
-
-        // Use the same logic as CurlWrapper::extractApiName
-        if (empty($config['track_endpoints'])) {
-            return $host;
-        }
-
-        if ($config['track_endpoints'] === true) {
-            return $this->buildEndpointName($parsedUrl);
-        }
-
-        if (is_array($config['track_endpoints'])) {
-            foreach ($config['track_endpoints'] as $pattern) {
-                if ($this->matchesPattern($host, $pattern)) {
-                    return $this->buildEndpointName($parsedUrl);
-                }
-            }
-        }
-
-        return $host;
-    }
-
-    private function buildEndpointName(array $parsedUrl): string
-    {
-        $host = $parsedUrl['host'] ?? 'unknown';
-        $path = $parsedUrl['path'] ?? '/';
-
-        $path = preg_replace('/\/+/', '/', trim($path, '/'));
-        if (empty($path)) {
-            $path = '/';
-        } else {
-            $path = '/' . $path;
-        }
-
-        return $host . $path;
-    }
-
-    private function matchesPattern(string $host, string $pattern): bool
-    {
-        if (strpos($pattern, '*') !== false) {
-            $regexPattern = str_replace('.', '\.', $pattern);
-            $regexPattern = str_replace('*', '.*', $regexPattern);
-            return preg_match('/^' . $regexPattern . '$/', $host) === 1;
-        }
-
-        return $host === $pattern;
-    }
-
-    private function shouldSample(array $config): bool
-    {
-        $sampleRate = $config['sample_rate'] ?? 100;
-
-        // If sample rate is 100, always sample
-        if ($sampleRate >= 100) {
-            return true;
-        }
-
-        // If sample rate is 0, never sample
-        if ($sampleRate <= 0) {
-            return false;
-        }
-
-        // Generate random number between 1-100 and check if it's within sample rate
-        return (mt_rand(1, 100) <= $sampleRate);
-    }
-
-    private function isUrlExcluded(string $url): bool
-    {
-        $wrapperConfig = CurlWrapper::getConfig();
-        if (empty($wrapperConfig['excluded_urls'])) {
-            return false;
-        }
-
-        $parsedUrl = parse_url($url);
-        $host = $parsedUrl['host'] ?? '';
-
-        foreach ($wrapperConfig['excluded_urls'] as $excludedPattern) {
-            if ($this->matchesPattern($host, $excludedPattern)) {
-                return true;
-            }
-        }
-
-        return false;
+        $this->hooked = false;
+        $this->debug('Disabled cURL hooking');
     }
 
     private function debug(string $message): void
@@ -456,60 +151,23 @@ class CurlHook
      */
     public function publishMetric(string $metricName, float $value, array $labels = []): bool
     {
-        if (!$this->config['enabled'] || !CurlWrapper::isEnabled()) {
+        if (!$this->config['enabled']) {
             return false;
         }
 
-        $status = CurlWrapper::getBackendStatus();
-        if (!$status['ready']) {
+        // Apply sampling logic using CurlWrapper
+        if (!CurlWrapper::shouldSample()) {
             return false;
         }
 
-        try {
-            // Use reflection to access CurlWrapper's private backend
-            $reflection = new \ReflectionClass(CurlWrapper::class);
-            $backendProperty = $reflection->getProperty('backend');
-            $backendProperty->setAccessible(true);
-            $backend = $backendProperty->getValue();
+        // Build dimensions using CurlWrapper
+        $dimensions = CurlWrapper::buildAdditionalDimensions();
 
-            $configProperty = $reflection->getProperty('config');
-            $configProperty->setAccessible(true);
-            $wrapperConfig = $configProperty->getValue();
+        // Merge with user-provided labels
+        $dimensions = array_merge($dimensions, $labels);
 
-            // Apply sampling logic (same as CurlWrapper)
-            if (!$this->shouldSample($wrapperConfig)) {
-                return false;
-            }
-
-            // Build dimensions similar to CurlWrapper
-            $dimensions = [];
-            if (!empty($wrapperConfig['service'])) {
-                $dimensions['service'] = $wrapperConfig['service'];
-            }
-
-            if (!empty($wrapperConfig['default_dimensions'])) {
-                foreach ($wrapperConfig['default_dimensions'] as $dimension) {
-                    if (is_array($dimension) && isset($dimension['Name'], $dimension['Value'])) {
-                        $dimensions[$dimension['Name']] = $dimension['Value'];
-                    } elseif (is_string($dimension)) {
-                        $dimensions['tag'] = $dimension;
-                    }
-                }
-            }
-
-            // Merge with user-provided labels
-            $dimensions = array_merge($dimensions, $labels);
-
-            // Publish the custom metric
-            $backend->publishMetrics($metricName, $value, $dimensions);
-
-            return true;
-        } catch (\Throwable $e) {
-            if ($this->config['debug']) {
-                error_log('[CurlTracker] Failed to publish custom metric: ' . $e->getMessage());
-            }
-            return false;
-        }
+        // Delegate to CurlWrapper's publishMetric method
+        return CurlWrapper::publishMetric($metricName, $value, $dimensions);
     }
 
     public function __destruct()

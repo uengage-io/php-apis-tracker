@@ -240,7 +240,7 @@ class CurlWrapper
         }
     }
 
-    private static function extractApiName(string $url): string
+    public static function extractApiName(string $url): string
     {
         $parsedUrl = parse_url($url);
         $host = $parsedUrl['host'] ?? 'unknown';
@@ -268,7 +268,7 @@ class CurlWrapper
         return $host;
     }
     
-    private static function buildEndpointName(array $parsedUrl): string
+    public static function buildEndpointName(array $parsedUrl): string
     {
         $host = $parsedUrl['host'] ?? 'unknown';
         $path = $parsedUrl['path'] ?? '/';
@@ -284,7 +284,7 @@ class CurlWrapper
         return $host . $path;
     }
     
-    private static function matchesPattern(string $host, string $pattern): bool
+    public static function matchesPattern(string $host, string $pattern): bool
     {
         // Support wildcard matching with asterisks
         if (strpos($pattern, '*') !== false) {
@@ -298,7 +298,7 @@ class CurlWrapper
         return $host === $pattern;
     }
 
-    private static function buildAdditionalDimensions(): array
+    public static function buildAdditionalDimensions(): array
     {
         $dimensions = [];
         
@@ -323,7 +323,7 @@ class CurlWrapper
         return $dimensions;
     }
 
-    private static function shouldSample(): bool
+    public static function shouldSample(): bool
     {
         $sampleRate = self::$config['sample_rate'];
 
@@ -341,7 +341,7 @@ class CurlWrapper
         return (mt_rand(1, 100) <= $sampleRate);
     }
 
-    private static function isUrlExcluded(string $url): bool
+    public static function isUrlExcluded(string $url): bool
     {
         if (empty(self::$config['excluded_urls'])) {
             return false;
@@ -389,5 +389,105 @@ class CurlWrapper
     public static function getConfig(): array
     {
         return self::$config;
+    }
+
+    /**
+     * Publish a metric to the configured backend
+     *
+     * @param string $metricName The name of the metric to publish
+     * @param mixed $value The value of the metric
+     * @param array $dimensions Additional dimensions for the metric
+     * @return bool True if the metric was published successfully, false otherwise
+     */
+    public static function publishMetric(string $metricName, $value, array $dimensions = []): bool
+    {
+        if (!self::$backend || !self::$backend->isReady()) {
+            return false;
+        }
+
+        try {
+            self::$backend->publishMetrics($metricName, $value, $dimensions);
+            return true;
+        } catch (\Exception $e) {
+            if (self::$config['debug']) {
+                error_log("[CurlTracker] Failed to publish metric: " . $e->getMessage());
+            }
+            return false;
+        }
+    }
+
+    /**
+     * Track curl handle initialization (for use by hooks)
+     *
+     * @param resource $handle The cURL handle
+     * @param string|null $url The initial URL
+     */
+    public static function trackInit($handle, $url = null): void
+    {
+        if (self::$backend) {
+            $handleId = (int)$handle;
+            self::$activeCurls[$handleId] = [
+                'url' => $url,
+                'start_time' => null
+            ];
+        }
+    }
+
+    /**
+     * Track curl option setting (for use by hooks)
+     *
+     * @param resource $handle The cURL handle
+     * @param int $option The option to set
+     * @param mixed $value The option value
+     */
+    public static function trackSetopt($handle, int $option, $value): void
+    {
+        if (self::$backend) {
+            $handleId = (int)$handle;
+            if (isset(self::$activeCurls[$handleId]) && $option === CURLOPT_URL) {
+                self::$activeCurls[$handleId]['url'] = $value;
+            }
+        }
+    }
+
+    /**
+     * Track curl execution start (for use by hooks)
+     *
+     * @param resource $handle The cURL handle
+     */
+    public static function trackExecStart($handle): void
+    {
+        if (self::$backend) {
+            $handleId = (int)$handle;
+            if (isset(self::$activeCurls[$handleId])) {
+                self::$activeCurls[$handleId]['start_time'] = microtime(true);
+            }
+        }
+    }
+
+    /**
+     * Track curl execution end and publish metrics (for use by hooks)
+     *
+     * @param resource $handle The cURL handle
+     */
+    public static function trackExecEnd($handle): void
+    {
+        if (self::$backend) {
+            $handleId = (int)$handle;
+            self::trackMetrics($handle, $handleId);
+        }
+    }
+
+    /**
+     * Track curl handle close (for use by hooks)
+     *
+     * @param resource $handle The cURL handle
+     */
+    public static function trackClose($handle): void
+    {
+        if (self::$backend) {
+            $handleId = (int)$handle;
+            unset(self::$activeCurls[$handleId]);
+        }
     }
 }

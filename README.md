@@ -138,8 +138,40 @@ CurlHook::init([
 
 - PHP 7.1+
 - ext-curl
-- ext-uopz or ext-runkit7 (for automatic cURL hooking)
+- ext-uopz (for automatic cURL hooking with CurlHook)
 - For CloudWatch: aws/aws-sdk-php ^3.0
+
+## Usage Modes
+
+### 1. Automatic Hooking (Zero Code Changes)
+Requires uopz extension. All native `curl_*` functions are automatically tracked:
+
+```php
+use CurlTracker\CurlHook;
+
+CurlHook::init($config)->enable();
+
+// Your existing code works unchanged
+$ch = curl_init('https://api.example.com');
+curl_exec($ch);
+curl_close($ch);
+```
+
+### 2. Manual Wrapper (Works Everywhere)
+No extensions required. Use `CurlWrapper::curl_*` instead of native functions:
+
+```php
+use CurlTracker\CurlWrapper;
+
+CurlWrapper::init($config);
+
+// Replace curl_* with CurlWrapper::curl_*
+$ch = CurlWrapper::curl_init('https://api.example.com');
+CurlWrapper::curl_exec($ch);
+CurlWrapper::curl_close($ch);
+```
+
+Both modes support the same configuration interface.
 
 ## License
 

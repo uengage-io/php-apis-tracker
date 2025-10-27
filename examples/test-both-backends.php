@@ -16,7 +16,8 @@ function testBackend($backendType, $config)
         echo "✅ CurlHook enabled successfully\n";
     } catch (Exception $e) {
         echo "❌ Failed to enable CurlHook: " . $e->getMessage() . "\n";
-        echo "This is expected if uopz or runkit7 extensions are not available\n";
+        echo "This is expected if uopz extension is not available\n";
+        echo "Install uopz with: sudo pecl install uopz\n";
         return;
     }
 

@@ -3,7 +3,7 @@
     "description": "Automatically track cURL API response times and publish metrics to AWS CloudWatch or Prometheus PushGateway with zero code changes",
     "type": "library",
     "license": "MIT",
-    "version": "3.0.2",
+    "version": "4.0.0",
     "keywords": ["curl", "api", "metrics", "cloudwatch", "aws", "prometheus", "pushgateway", "monitoring", "performance"],
     "authors": [
         {
@@ -20,8 +20,7 @@
         "aws/aws-sdk-php": "^3.0"
     },
     "suggest": {
-        "ext-uopz": "For zero-code-change automatic cURL hooking (recommended)",
-        "ext-runkit7": "Alternative for automatic cURL hooking",
+        "ext-uopz": "Required for zero-code-change automatic cURL hooking with CurlHook",
         "aws/aws-sdk-php": "Required when using CloudWatch backend (^3.0)"
     },
     "autoload": {
